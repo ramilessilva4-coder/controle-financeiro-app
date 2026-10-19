@@ -1,5 +1,5 @@
 /* Service worker mínimo: permite instalar como app. Os dados vêm sempre do PC (nunca de cache). */
-const CACHE = "cf-shell-v3";
+const CACHE = "cf-shell-v4";
 const SHELL = ["./", "index.html", "app.css", "app.js", "manifest.webmanifest", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {

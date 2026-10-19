@@ -190,7 +190,8 @@ function viewDashboard(d) {
     ${kpi("Custos", fmt(k.custos))}
     ${kpi("Entradas", fmt(k.recebido), "dinheiro recebido", k.recebido ? "pos" : "")}
     ${kpi("Saídas", fmt(k.saidas), "contas pagas", k.saidas ? "neg" : "")}
-    ${kpi("Saldo do caixa", fmt(k.saldo), "entradas − saídas", k.saldo < 0 ? "neg" : "pos", true)}
+    ${kpi("Saldo do caixa", fmt(k.saldo), "entradas − saídas", k.saldo < 0 ? "neg" : "pos")}
+    ${kpi("Saldo previsto", fmt(k.saldo + k.a_receber - k.a_pagar), "caixa + a receber − a pagar", k.saldo + k.a_receber - k.a_pagar < 0 ? "neg" : "pos")}
     ${kpi("A receber", fmt(k.a_receber), k.vencido ? "vencido " + fmt(k.vencido) : "", k.a_receber ? "warn" : "")}
     ${kpi("A pagar", fmt(k.a_pagar), k.vencido_pagar ? "vencido " + fmt(k.vencido_pagar) : "", k.a_pagar ? "warn" : "")}
     ${kpi("Sobra após as contas", fmt(k.lucro - k.saidas), "lucro − contas pagas", k.lucro - k.saidas < 0 ? "neg" : "pos")}
