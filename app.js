@@ -19,7 +19,7 @@ const PERIODS = ["Hoje", "Esta semana", "Este mês", "Mês anterior", "Este ano"
 
 // ------------------------------------------------------------------ estado
 const state = {
-  token: null, tab: "inicio", period: "Este mês", kind: "limpeza", recFilter: "abertos", search: "",
+  token: null, tab: "inicio", period: "Este mês", kind: "limpeza", recFilter: "abertos", search: "", contas: "receber",
   meta: null, rev: null, data: null, online: false,
 };
 try {
@@ -75,7 +75,7 @@ function toast(msg, ms = 2600) {
 
 // ------------------------------------------------------------------ períodos e abas
 function renderChips() {
-  const show = state.tab !== "receber";
+  const show = state.tab !== "receber";  // aba Contas: sem filtro de período
   const el = $("#period-chips");
   el.hidden = !show;
   el.innerHTML = PERIODS.map((p) => `<button class="chip ${p === state.period ? "active" : ""}" data-p="${esc(p)}">${esc(p)}</button>`).join("");
@@ -111,7 +111,7 @@ async function load(manual) {
     if (state.tab === "inicio") state.data = await api("dashboard", q);
     else if (state.tab === "salgados") state.data = await api("batches", q);
     else if (state.tab === "servicos") state.data = await api("jobs", { ...q, kind: state.kind });
-    else state.data = await api("receivables");
+    else state.data = await api(state.contas === "pagar" ? "payables" : "receivables");
     const r = await api("ping");
     state.rev = r.rev;
     render();
@@ -127,7 +127,37 @@ function render() {
   if (state.tab === "inicio") v.innerHTML = viewDashboard(state.data);
   else if (state.tab === "salgados") v.innerHTML = viewBatches(state.data);
   else if (state.tab === "servicos") v.innerHTML = viewJobs(state.data);
-  else v.innerHTML = viewReceivables(state.data);
+  else v.innerHTML = contasSeg() + (state.contas === "pagar" ? viewPayables(state.data) : viewReceivables(state.data));
+}
+
+function contasSeg() {
+  return `<div class="seg"><button data-contas="receber" class="${state.contas === "receber" ? "active" : ""}">A receber</button>
+    <button data-contas="pagar" class="${state.contas === "pagar" ? "active" : ""}">A pagar</button></div>`;
+}
+
+function viewPayables(d) {
+  const t = d.totals;
+  const q = state.search.toLowerCase();
+  const items = d.items.filter((r) => {
+    if (state.recFilter === "abertos" && !["Pendente", "Parcialmente pago", "Vencido"].includes(r.status)) return false;
+    if (state.recFilter === "vencidos" && r.status !== "Vencido") return false;
+    if (state.recFilter === "pagos" && r.status !== "Pago") return false;
+    return !q || r.description.toLowerCase().includes(q) || (r.supplier || "").toLowerCase().includes(q)
+      || r.category.toLowerCase().includes(q);
+  });
+  let h = `<div class="kpis">
+    ${kpi("Total em aberto", fmt(t.em_aberto), `${t.qtd_aberto} conta(s)`, t.em_aberto ? "warn" : "", true)}
+    ${kpi("Vencidas", fmt(t.vencido), `${t.qtd_vencido} conta(s)`, t.vencido ? "neg" : "")}
+    ${kpi("Até o fim do mês", fmt(t.mes), "em aberto")}
+  </div><h2>Contas a pagar</h2>
+  <div class="chips light" id="rec-filter">${[["abertos", "Em aberto"], ["vencidos", "Vencidas"], ["pagos", "Pagas"], ["todos", "Todas"]]
+    .map(([k, l]) => `<button class="chip ${state.recFilter === k ? "active" : ""}" data-rf="${k}">${l}</button>`).join("")}</div>
+  <input class="search" id="rec-search" type="search" placeholder="Pesquisar conta, fornecedor ou categoria" value="${esc(state.search)}" style="margin-top:10px">`;
+  if (!items.length) return h + emptyBox(d.items.length ? "Nenhuma conta neste filtro" : "Nenhuma conta a pagar", "Toque em + e escolha Conta a pagar (luz, aluguel, internet…).");
+  return h + "<div class='list'>" + items.map((r) => `<button class="row ${r.status === "Cancelado" ? "cancelled" : ""}" data-open="pagar" data-id="${r.id}">
+    <div class="left"><div class="t">${esc(r.description)}</div><div class="s">${esc(r.category)}${r.supplier ? " · " + esc(r.supplier) : ""}${r.series_id ? ` · ${r.series_n}/${r.series_total}` : ""}</div>
+    <div class="s">Vence ${dbr(r.due_date)}</div></div>
+    <div class="right"><div class="amt">${fmt(r.status === "Pago" ? r.amount : r.balance)}</div>${badge(r.status)}</div></button>`).join("") + "</div>";
 }
 
 // tempo real: verifica a cada 3 s se algo mudou (no PC ou em outro aparelho)
@@ -158,9 +188,12 @@ function viewDashboard(d) {
     ${kpi("Faturamento", fmt(k.faturamento), "", "", true)}
     ${kpi("Lucro", fmt(k.lucro), "margem " + pct(k.margem), k.lucro < 0 ? "neg" : "pos")}
     ${kpi("Custos", fmt(k.custos))}
-    ${kpi("Recebido", fmt(k.recebido), "entradas no período")}
-    ${kpi("A receber", fmt(k.a_receber), "", k.a_receber ? "warn" : "")}
-    ${kpi("Vencido", fmt(k.vencido), "", k.vencido ? "neg" : "")}
+    ${kpi("Entradas", fmt(k.recebido), "dinheiro recebido", k.recebido ? "pos" : "")}
+    ${kpi("Saídas", fmt(k.saidas), "contas pagas", k.saidas ? "neg" : "")}
+    ${kpi("Saldo do caixa", fmt(k.saldo), "entradas − saídas", k.saldo < 0 ? "neg" : "pos", true)}
+    ${kpi("A receber", fmt(k.a_receber), k.vencido ? "vencido " + fmt(k.vencido) : "", k.a_receber ? "warn" : "")}
+    ${kpi("A pagar", fmt(k.a_pagar), k.vencido_pagar ? "vencido " + fmt(k.vencido_pagar) : "", k.a_pagar ? "warn" : "")}
+    ${kpi("Sobra após as contas", fmt(k.lucro - k.saidas), "lucro − contas pagas", k.lucro - k.saidas < 0 ? "neg" : "pos")}
     ${kpi("Fornadas / serviços", k.fornadas + " / " + k.servicos)}
   </div>`;
   const months = d.monthly.filter((m) => m.faturamento || m.lucro);
@@ -245,6 +278,8 @@ function viewReceivables(d) {
 $("#view").addEventListener("click", (e) => {
   const k = e.target.closest("[data-kind]");
   if (k) { state.kind = k.dataset.kind; load(); return; }
+  const ct = e.target.closest("[data-contas]");
+  if (ct) { state.contas = ct.dataset.contas; state.search = ""; load(); return; }
   const rf = e.target.closest("[data-rf]");
   if (rf) { state.recFilter = rf.dataset.rf; render(); return; }
   const o = e.target.closest("[data-open]");
@@ -281,6 +316,7 @@ $("#fab").addEventListener("click", () => {
     <button data-new="fornada"><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3a9 9 0 1 0 9 9 4 4 0 0 1-4-4 4 4 0 0 1-5-5z"/></svg></span><span>Nova fornada<small>Produção e venda de salgados</small></span></button>
     <button data-new="limpeza"><span class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><span>Serviço de limpeza<small>Valor cobrado e custos</small></span></button>
     <button data-new="outro"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></span><span>Outro serviço<small>Manutenção, vendas avulsas…</small></span></button>
+    <button data-new="pagar"><span class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg></span><span>Conta a pagar<small>Luz, água, aluguel… única ou recorrente</small></span></button>
     <button data-new="receber"><span class="ic"><svg viewBox="0 0 24 24"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/></svg></span><span>Valor a receber<small>Dívida que não veio de venda ou serviço</small></span></button>
   </div>`);
 });
@@ -290,6 +326,7 @@ $("#sheet-body").addEventListener("click", (e) => {
   if (n) {
     if (n.dataset.new === "fornada") formBatch();
     else if (n.dataset.new === "receber") formReceivable();
+    else if (n.dataset.new === "pagar") formPayable();
     else formJob(n.dataset.new);
   }
 });
@@ -451,6 +488,78 @@ function formReceivable() {
   }, async (v) => { await api("rec_create", v); toast("Valor a receber lançado"); });
 }
 
+const EXPENSE_CATS = ["Aluguel", "Luz", "Água", "Gás", "Internet", "Telefone", "Gastos comuns",
+  "Ingredientes e materiais", "Transporte", "Impostos e taxas", "Outros"];
+const FREQS = [["unica", "Uma única vez"], ["mensal", "Todo mês"], ["semanal", "Toda semana"],
+  ["quinzenal", "A cada 15 dias"], ["anual", "Todo ano"]];
+
+function addMonths(iso, n) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1 + n, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, last));
+  return t.toISOString().slice(0, 10);
+}
+function addDays(iso, n) { const t = new Date(iso + "T00:00:00Z"); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); }
+function lastDue(first, freq, n) {
+  if (freq === "mensal") return addMonths(first, n - 1);
+  if (freq === "anual") return addMonths(first, 12 * (n - 1));
+  return addDays(first, (freq === "semanal" ? 7 : 15) * (n - 1));
+}
+
+function formPayable() {
+  openSheet(`<h3>Conta a pagar</h3><form id="frm">
+    ${text("description", "Descrição", "Ex.: Luz, Aluguel, Internet")}
+    <label class="f"><span>Categoria</span><select name="category">${EXPENSE_CATS.map((c) => `<option ${c === "Outros" ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+    ${text("supplier", "Fornecedor / a quem pagar", "Opcional")}
+    ${money("amount", "Valor")}
+    ${dateF("due_date", "Vencimento (1ª conta)")}
+    <label class="f"><span>Repetição</span><select name="frequency">${FREQS.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select></label>
+    <div data-rep hidden>${qty("repeat", "Quantas vezes")}</div>
+    <p class="hint" id="r-prev"></p>
+    <label class="f" style="display:flex;gap:10px;align-items:center"><input type="checkbox" name="paid_now" style="width:auto"> <span style="margin:0">Já paguei hoje (a 1ª)</span></label>
+    ${notesF()}
+    <div class="error"></div><button class="btn" type="submit">Salvar conta</button></form>`);
+  const f = $("#frm");
+  f.querySelector("[name=repeat]").value = "12";
+  wireForm(f, () => {
+    const v = vals(f);
+    const freq = f.querySelector("[name=frequency]").value;
+    f.querySelector("[data-rep]").hidden = freq === "unica";
+    const n = digits(f.querySelector("[name=repeat]").value);
+    $("#r-prev").textContent = freq === "unica" || !v.due_date || n < 2 ? "" :
+      `Serão criadas ${n} contas de ${fmt(v.amount)}: de ${dbr(v.due_date)} até ${dbr(lastDue(v.due_date, freq, n))}.`;
+    if (!v.description) return setErr(f, "Informe a descrição da conta.");
+    if (!v.amount) return setErr(f, "Informe o valor.");
+    if (!v.due_date) return setErr(f, "Informe o vencimento.");
+    if (freq !== "unica" && (n < 2 || n > 60)) return setErr(f, "Repetir de 2 a 60 vezes.");
+    setErr(f, "");
+  }, async (v) => {
+    v.paid_now = f.querySelector("[name=paid_now]").checked;
+    if (v.frequency === "unica") v.repeat = 1;
+    const r = await api("payable_create", v);
+    toast(r.ids.length > 1 ? `${r.ids.length} contas lançadas` : "Conta lançada");
+  });
+  f.querySelector("[name=paid_now]").addEventListener("change", () => f.dispatchEvent(new Event("input")));
+}
+
+function formPayPayable(p) {
+  openSheet(`<h3>Pagar conta</h3><p class="muted">${esc(p.description)} — vence ${dbr(p.due_date)}</p>
+    <div class="result"><div><span>Valor</span><b>${fmt(p.amount)}</b></div><div><span>Já pago</span><b>${fmt(p.paid)}</b></div>
+    <div><span>Falta pagar</span><b class="warn">${fmt(p.balance)}</b></div><div><span>Depois</span><b id="r-after">—</b></div></div>
+    <form id="frm">${money("amount", "Valor pago", p.balance)}${dateF("date", "Data do pagamento")}${methodF("method")}${notesF()}
+    <div class="error"></div><button class="btn" type="submit">Confirmar pagamento</button></form>`);
+  const f = $("#frm");
+  wireForm(f, () => {
+    const v = vals(f);
+    const rest = p.balance - v.amount;
+    $("#r-after").textContent = rest === 0 ? "Quitada" : fmt(rest);
+    if (!v.amount) return setErr(f, "Informe o valor pago.");
+    if (v.amount > p.balance) return setErr(f, "O valor é maior que o que falta pagar.");
+    setErr(f, "");
+  }, async (v) => { await api("payable_pay", { ...v, id: p.id }); toast(p.balance - v.amount === 0 ? "Conta quitada" : "Pagamento registrado"); });
+}
+
 function formPayment(rec) {
   openSheet(`<h3>Registrar pagamento</h3><p class="muted">${esc(rec.client_name)} — ${esc(rec.description)}</p>
     <div class="result"><div><span>Devido</span><b>${fmt(rec.amount)}</b></div><div><span>Já pago</span><b>${fmt(rec.paid)}</b></div>
@@ -493,6 +602,20 @@ async function openDetails(entity, id) {
         ["Recebido", fmt(j.received)], ["A receber", fmt(j.to_receive)], ["Observações", esc(j.notes || "—")],
         ...(j.cancel_reason ? [["Motivo do cancelamento", esc(j.cancel_reason)]] : [])])}
         ${actions(j.status === "ativo", j.to_receive > 0 ? j.receivable_id : null, "jobs", id)}`);
+    } else if (entity === "pagar" || entity === "pagamento_conta") {
+      if (entity === "pagamento_conta") return;
+      const p = await api("payable", { id });
+      const pays = p.payments.length ? `<h2>Pagamentos</h2><div class="list">${p.payments.map((x) => `<div class="row"><div class="left">
+        <div class="t">${dbr(x.date)}${x.method ? " · " + esc(x.method) : ""}</div><div class="s">${esc(x.notes || x.reverse_reason || "")}</div></div>
+        <div class="right"><div class="amt">${fmt(x.amount)}</div>${badge(x.status === "ativo" ? "Confirmado" : "Estornado")}</div></div>`).join("")}</div>` : "";
+      openSheet(`<h3>${esc(p.description)}</h3>${dl([
+        ["Referência", esc(p.ref)], ["Situação", badge(p.status)], ["Categoria", esc(p.category)],
+        ["Fornecedor", esc(p.supplier || "—")], ["Valor", fmt(p.amount)], ["Pago", fmt(p.paid)], ["Falta pagar", fmt(p.balance)],
+        ["Vencimento", dbr(p.due_date)], ["Repetição", p.series_id ? `${p.series_n}/${p.series_total}` : "Única"],
+        ["Observações", esc(p.notes || "—")], ...(p.cancel_reason ? [["Motivo do cancelamento", esc(p.cancel_reason)]] : [])])}${pays}
+        <div class="btns">${p.raw_status === "aberto" && p.balance > 0 ? `<button class="btn" data-paypag="${p.id}">Pagar conta</button>` : ""}
+        ${p.raw_status === "aberto" ? `<button class="btn danger" data-cancel="payables" data-cid="${p.id}">Cancelar conta</button>` : ""}
+        <button class="btn secondary" data-close>Fechar</button></div>`);
     } else if (entity === "receber" || entity === "receber_pagamento") {
       const r = await api("receivable", { id });
       const pays = r.payments.length ? `<h2>Pagamentos</h2><div class="list">${r.payments.map((p) => `<div class="row"><div class="left">
@@ -518,6 +641,11 @@ function actions(active, recId, kind, id) {
 
 $("#sheet-body").addEventListener("click", async (e) => {
   if (e.target.closest("[data-close]")) return closeSheet();
+  const pp = e.target.closest("[data-paypag]");
+  if (pp) {
+    try { formPayPayable(await api("payable", { id: +pp.dataset.paypag })); } catch (err) { toast(err.message); }
+    return;
+  }
   const p = e.target.closest("[data-pay]");
   if (p) {
     try { formPayment(await api("receivable", { id: +p.dataset.pay })); } catch (err) { toast(err.message); }
@@ -528,7 +656,7 @@ $("#sheet-body").addEventListener("click", async (e) => {
     const reason = prompt("Motivo do cancelamento (obrigatório).\nO registro fica no histórico, mas sai dos totais.");
     if (!reason || !reason.trim()) return;
     try {
-      const act = { batches: "batch_cancel", jobs: "job_cancel", receivables: "rec_cancel" }[c.dataset.cancel];
+      const act = { batches: "batch_cancel", jobs: "job_cancel", receivables: "rec_cancel", payables: "payable_cancel" }[c.dataset.cancel];
       await api(act, { id: +c.dataset.cid, reason: reason.trim() });
       toast("Cancelado");
       closeSheet();
