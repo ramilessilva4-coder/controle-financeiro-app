@@ -865,8 +865,11 @@ begin
                         or exists (select 1 from cf.receivables)) then
     perform cf.fail('A nuvem já tem dados. Use a restauração para substituí-los.');
   end if;
-  delete from cf.payments; delete from cf.receivables; delete from cf.batches; delete from cf.services;
-  delete from cf.audit_log; delete from cf.categories; delete from cf.clients;
+  -- (o Supabase bloqueia DELETE/UPDATE sem WHERE vindos da API; por isso o "where id is not null")
+  delete from cf.payments where id is not null; delete from cf.receivables where id is not null;
+  delete from cf.batches where id is not null; delete from cf.services where id is not null;
+  delete from cf.audit_log where id is not null; delete from cf.categories where id is not null;
+  delete from cf.clients where id is not null;
   delete from cf.settings where key in ('app_display_name', 'salgado_price', 'salgado_margin', 'salgado_cost', 'limpeza_default_cost');
   foreach t in array array['clients','categories','batches','services','receivables','payments','audit_log','settings'] loop
     select string_agg(quote_ident(column_name), ', ' order by ordinal_position) into cols
@@ -883,7 +886,7 @@ begin
   end loop;
   -- marca tudo como alterado para os aparelhos baixarem de novo
   foreach t in array array['settings','clients','categories','batches','services','receivables','payments','audit_log'] loop
-    execute format('update cf.%I set rev = nextval(''cf.rev_seq'')', t);
+    execute format('update cf.%I set rev = nextval(''cf.rev_seq'') where rev is not null', t);
   end loop;
   update cf.secrets set epoch = cf.now_txt() || '-' || substr(md5(random()::text), 1, 6) where id = 1;
   perform cf.audit('sistema', null, 'sistema', case when p_replace then 'Dados da nuvem substituídos por um backup'
